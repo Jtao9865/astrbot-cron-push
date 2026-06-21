@@ -25,7 +25,7 @@ _logger = logging.getLogger("astrbot")
 TASKS = [
     {
         "enabled": True,
-        "cron": "* * * * *",           
+        "cron": "0 9 * * *",           # 每天 9:00 AM
         "message": "早上好！新的一天开始了",
     },
     {
@@ -101,11 +101,11 @@ class CronPushPlugin(Star):
             payload = {}
 
         message = payload.get("message", "")
-        job_id = payload.get("job_id", "unknown")
 
-        # MessageChain 没有 append 方法，组件存放在 chain.chain 列表中
+        # Plain = 文本组件（不是 Text）
+        # MessageChain.chain 是 list，直接用 append
         chain = MessageChain()
-        chain.chain.append(Comp.Text(message))
+        chain.chain.append(Comp.Plain(message))
 
         # 尝试向所有可能的会话发送
         sessions_to_try = [
