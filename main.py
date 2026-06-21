@@ -25,7 +25,7 @@ _logger = logging.getLogger("astrbot")
 TASKS = [
     {
         "enabled": True,
-        "cron": "0 9 * * *",           # 每天 9:00 AM
+        "cron": "* * * * *",           
         "message": "早上好！新的一天开始了",
     },
     {
