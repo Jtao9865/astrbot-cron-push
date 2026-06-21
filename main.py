@@ -49,33 +49,47 @@ class CronPushPlugin(Star):
         self._known_sessions: set[str] = set()
         # 缓存平台 ID 列表
         self._platform_ids: list[str] = []
-        # 是否已完成懒加载初始化
-        self._lazy_initialized = False
+        # 是否已完成初始化
+        self._initialized = False
 
         if self.ENABLE_BUILTIN_JOBS:
-            _logger.info("[CronPush] 插件初始化完成，等待 OnPluginLoadedEvent 触发延迟注册")
+            _logger.info("[CronPush] 插件初始化完成，等待 AstrBot 启动后注册定时任务")
 
     async def initialize(self):
         """AstrBot 调用此方法进行插件初始化。
         
-        注意：此方法在平台适配器初始化之前就被调用，因此不能在这里
-        访问 platform_insts。改为注册 OnPluginLoadedEvent 监听器，
-        在平台就绪后再执行实际的任务注册。
+        注意：此方法在平台适配器初始化之前被调用，因此不能在这里
+        访问 platform_insts。改为注册 OnAstrBotLoadedEvent 监听器，
+        在 AstrBot 完全启动后再执行定时任务注册。
         """
         await self._register_session_listener()
+        await self._register_startup_hook()
 
-    async def _lazy_register_tasks(self):
-        """在平台适配器就绪后，延迟注册定时任务。"""
-        if self._lazy_initialized:
-            return
-        self._lazy_initialized = True
+    async def _register_startup_hook(self):
+        """注册 OnAstrBotLoadedEvent 钩子，在 AstrBot 启动完成后注册定时任务。"""
+        from astrbot.core.star.register.star_handler import (
+            get_handler_or_create,
+        )
+        from astrbot.core.star.star_handler import EventType
 
-        # 缓存平台 ID
-        self._platform_ids = [p.meta().id for p in self.context.platform_manager.platform_insts]
-        _logger.info(f"[CronPush] 已发现 {len(self._platform_ids)} 个平台: {self._platform_ids}")
+        async def startup_handler():
+            """AstrBot 启动完成回调，此时平台适配器已全部就绪。"""
+            if self._initialized:
+                return
+            self._initialized = True
 
-        await self._register_builtin_tasks()
-        _logger.info("[CronPush] 延迟初始化完成，定时任务已注册")
+            # 缓存平台 ID
+            self._platform_ids = [p.meta().id for p in self.context.platform_manager.platform_insts]
+            _logger.info(f"[CronPush] 已发现 {len(self._platform_ids)} 个平台: {self._platform_ids}")
+
+            await self._register_builtin_tasks()
+            _logger.info("[CronPush] 定时任务注册完成")
+
+        get_handler_or_create(
+            startup_handler,
+            EventType.OnAstrBotLoadedEvent,
+        )
+        _logger.info("[CronPush] 已注册 OnAstrBotLoadedEvent 钩子")
 
     async def _register_session_listener(self):
         """注册一个通用的消息接收监听器，用于收集已知会话。"""
@@ -84,12 +98,8 @@ class CronPushPlugin(Star):
         )
         from astrbot.core.star.star_handler import EventType
 
-        # 先尝试延迟注册任务（如果平台已经就绪）
         async def session_capture_handler(event: AstrMessageEvent):
             """捕获所有收到的消息，记录其 unified_msg_origin 到已知会话列表。"""
-            # 首次收到消息时，尝试延迟初始化
-            await self._lazy_register_tasks()
-
             umo = event.unified_msg_origin
             if umo:
                 self._known_sessions.add(umo)
