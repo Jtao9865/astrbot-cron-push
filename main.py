@@ -5,12 +5,16 @@
 """
 
 import asyncio
+import logging
 import astrbot.api.message_components as Comp
 from astrbot.api.event import filter as event_filter
 from astrbot.core.platform import AstrMessageEvent
 from astrbot.api.star import Context, Star
 from astrbot.api.event import MessageChain
 from astrbot.core.message.message_event_result import CommandResult
+
+# 使用 astrbot 统一的 logger，Context 对象没有 logger 属性
+_logger = logging.getLogger("astrbot")
 
 # ================================================================ #
 #  【硬编码配置区】—— 在这里填写你的群号和用户
@@ -82,7 +86,7 @@ class CronPushPlugin(Star):
                 loop.run_until_complete(self._register_builtin_tasks())
                 loop.close()
             except Exception as e:
-                self.context.logger.error(f"[CronPush] 注册内置任务失败: {e}")
+                _logger.error(f"[CronPush] 注册内置任务失败: {e}")
 
     async def _register_builtin_tasks(self):
         """注册所有内置定时任务"""
@@ -114,12 +118,12 @@ class CronPushPlugin(Star):
                     args=[job],
                     replace_existing=True,
                 )
-                self.context.logger.info(
-                    f"[CronPush] 已注册内置任务 #{idx}: {task['message']} "
-                    f"(群 {group_id}, cron={task['cron']})"
+                _logger.info(
+                    f'[CronPush] 已注册内置任务 #{idx}: {task["message"]} '
+                    f'(群 {group_id}, cron={task["cron"]})'
                 )
             except Exception as e:
-                self.context.logger.error(f"[CronPush] 注册内置任务失败: {e}")
+                _logger.error(f"[CronPush] 注册内置任务失败: {e}")
 
     async def _push_task(self, job: dict):
         """执行推送：向指定群 @ 指定用户"""
@@ -135,15 +139,15 @@ class CronPushPlugin(Star):
         try:
             success = await self.context.send_message(session, chain)
             if success:
-                self.context.logger.info(
-                    f"[CronPush] 已推送到群 {job['group_id']}: {message}"
+                _logger.info(
+                    f'[CronPush] 已推送到群 {job["group_id"]}: {message}'
                 )
             else:
-                self.context.logger.warning(
-                    f"[CronPush] 推送失败(找不到会话): 群 {job['group_id']}"
+                _logger.warning(
+                    f'[CronPush] 推送失败(找不到会话): 群 {job["group_id"]}'
                 )
         except Exception as e:
-            self.context.logger.error(f"[CronPush] 推送异常: {e}")
+            _logger.error(f"[CronPush] 推送异常: {e}")
 
     # ================================================================ #
     #  【用户指令】—— 以下命令可选保留
@@ -184,7 +188,7 @@ class CronPushPlugin(Star):
     #     try:
     #         await self.context.cron_manager.delete_job(info["job_name"])
     #     except Exception as e:
-    #         self.context.logger.error(f"[CronPush] 删除任务失败: {e}")
+    #         _logger.error(f"[CronPush] 删除任务失败: {e}")
     #     del self._jobs[idx]
     #     yield CommandResult().message(f"已删除任务 #{idx}")
 
@@ -215,4 +219,4 @@ class CronPushPlugin(Star):
             except Exception:
                 pass
         self._jobs.clear()
-        self.context.logger.info("[CronPush] 插件已卸载，定时任务已清理")
+        _logger.info("[CronPush] 插件已卸载，定时任务已清理")
