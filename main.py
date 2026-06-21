@@ -82,6 +82,7 @@ class CronPushPlugin(Star):
             self._platform_ids = [p.meta().id for p in self.context.platform_manager.platform_insts]
             _logger.info(f"[CronPush] 已发现 {len(self._platform_ids)} 个平台: {self._platform_ids}")
 
+            await self._cleanup_orphan_jobs()
             await self._register_builtin_tasks()
             _logger.info("[CronPush] 定时任务注册完成")
 
@@ -110,6 +111,27 @@ class CronPushPlugin(Star):
             EventType.AdapterMessageEvent,
         )
         _logger.info("[CronPush] 已注册会话监听器")
+
+
+    async def _cleanup_orphan_jobs(self):
+        """清理数据库中不属于本插件内置任务的旧 basic cron 任务。
+
+        AstrBot 启动时 sync_from_db() 会从数据库加载所有 persistent=True 的
+        basic 任务，如果此时 handler 尚未注册就会报 'missing handler' 警告。
+        本方法在注册新任务前删除所有 job_id 不以 'builtin_' 开头的 basic 任务，
+        从而消除此类警告。
+        """
+        try:
+            jobs = await self.context.cron_manager.list_jobs(job_type='basic')
+            orphan_ids = [
+                job.job_id for job in jobs
+                if not job.job_id.startswith('builtin_')
+            ]
+            for job_id in orphan_ids:
+                await self.context.cron_manager.delete_job(job_id)
+                _logger.info(f'[CronPush] 已清理孤儿 cron 任务: {job_id}')
+        except Exception as e:
+            _logger.debug(f'[CronPush] 清理孤儿任务失败（忽略）: {e}')
 
     async def _register_builtin_tasks(self):
         """注册所有内置定时任务"""
