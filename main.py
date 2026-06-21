@@ -1,6 +1,7 @@
 ﻿"""AstrBot 定时推送插件 —— 全内置模式，无条件推送。
 
 所有任务在插件加载时自动注册，到点自动发送。
+不依赖群号，遍历所有已连接的平台发送消息。
 """
 
 import asyncio
@@ -25,7 +26,7 @@ _logger = logging.getLogger("astrbot")
 TASKS = [
     {
         "enabled": True,
-        "cron": "* * * * *",           # 每天 9:00 AM
+        "cron": "* * * * *",     
         "message": "早上好！新的一天开始了",
     },
     {
@@ -96,38 +97,49 @@ class CronPushPlugin(Star):
                 _logger.error(f"[CronPush] 注册内置任务失败: {e}")
 
     async def _push_task(self, payload: dict | None = None, **kwargs):
-        """执行推送：无条件发送消息"""
+        """执行推送：遍历所有平台发送消息"""
         if payload is None:
             payload = {}
 
         message = payload.get("message", "")
 
-        # Plain = 文本组件（不是 Text）
-        # MessageChain.chain 是 list，直接用 append
         chain = MessageChain()
         chain.chain.append(Comp.Plain(message))
 
-        # 尝试向所有可能的会话发送
-        sessions_to_try = [
-            "graphql:GROUP_MESSAGE:all",
-            "onebot-v11:GROUP_MESSAGE:all",
-            "qq_official:GROUP_MESSAGE:all",
-            "telegram:GROUP_MESSAGE:all",
-        ]
-
+        # 遍历所有已连接的平台适配器
         sent = False
-        for session in sessions_to_try:
-            try:
-                success = await self.context.send_message(session, chain)
-                if success:
-                    _logger.info(f'[CronPush] 已推送到 {session}: {message}')
-                    sent = True
-                    break
-            except Exception as e:
-                _logger.debug(f"[CronPush] 尝试会话 {session} 失败: {e}")
+        for platform in self.context.platform_manager.platform_insts:
+            meta = platform.meta()
+            platform_id = meta.id
+            platform_name = meta.name
+
+            # 尝试以群消息和私聊消息两种类型发送
+            for msg_type in ("GroupMessage", "FriendMessage"):
+                try:
+                    # 构建 session 字符串: platform_id:MessageType:session_id
+                    # session_id 用空字符串，send_message 会遍历平台查找
+                    session_str = f"{platform_id}:{msg_type}:"
+                    success = await self.context.send_message(session_str, chain)
+                    if success:
+                        _logger.info(
+                            f'[CronPush] 已通过 {platform_id}({platform_name}) '
+                            f'[{msg_type}] 推送: {message}'
+                        )
+                        sent = True
+                        break
+                except Exception as e:
+                    _logger.debug(
+                        f"[CronPush] 通过 {platform_id}[{msg_type}] 推送失败: {e}"
+                    )
+
+            if sent:
+                break
 
         if not sent:
-            _logger.warning(f"[CronPush] 推送失败，未找到可用会话: {message}")
+            _logger.warning(
+                f"[CronPush] 推送失败，未找到可用平台。"
+                f"当前平台数: {len(self.context.platform_manager.platform_insts)}"
+            )
 
     async def terminate(self):
         """插件卸载时清理所有定时任务"""
