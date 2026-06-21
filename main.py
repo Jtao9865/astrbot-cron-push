@@ -25,7 +25,7 @@ _logger = logging.getLogger("astrbot")
 TASKS = [
     {
         "enabled": True,
-        "cron": "* * * * *",           # 每天 9:00 AM
+        "cron": "* * * * *",           # 每分钟
         "message": "早上好！新的一天开始了",
     },
     {
@@ -48,11 +48,9 @@ class CronPushPlugin(Star):
 
     def __init__(self, context: Context):
         super().__init__(context)
-        self._jobs: dict[int, dict] = {}
+        self._jobs: dict[str, dict] = {}
         self._next_index = 1
 
-        # 插件加载时自动注册内置定时任务
-        # 注意：不要在 __init__ 里开新 event loop，AstrBot 会在初始化后调用 initialize()
         if self.ENABLE_BUILTIN_JOBS:
             _logger.info("[CronPush] 插件初始化完成，等待 initialize() 注册任务")
 
@@ -71,22 +69,25 @@ class CronPushPlugin(Star):
 
             idx = self._next_index
             self._next_index += 1
+            job_id = f"builtin_{i}"
 
-            job = {
+            # payload 存储推送所需的数据，cron_manager 会在触发时传入
+            job_data = {
                 "index": idx,
+                "job_id": job_id,
                 "cron": task["cron"],
                 "message": task["message"],
-                "job_name": f"builtin_{i}",
             }
-            self._jobs[idx] = job
+            self._jobs[job_id] = job_data
 
             try:
-                self.context.cron_manager.add_basic_job(
-                    job["job_name"],
-                    task["cron"],
-                    self._push_task,
-                    args=[job],
-                    replace_existing=True,
+                await self.context.cron_manager.add_basic_job(
+                    name=job_id,
+                    cron_expression=task["cron"],
+                    handler=self._push_task,
+                    payload=job_data,
+                    enabled=True,
+                    persistent=False,
                 )
                 _logger.info(
                     f'[CronPush] 已注册内置任务 #{idx}: '
@@ -95,9 +96,16 @@ class CronPushPlugin(Star):
             except Exception as e:
                 _logger.error(f"[CronPush] 注册内置任务失败: {e}")
 
-    async def _push_task(self, job: dict):
-        """执行推送：无条件发送消息"""
-        message = job["message"]
+    async def _push_task(self, payload: dict | None = None, **kwargs):
+        """执行推送：无条件发送消息
+        
+        AstrBot CronJobManager 触发时传入 payload 和额外 kwargs。
+        """
+        if payload is None:
+            payload = {}
+
+        message = payload.get("message", "")
+        job_id = payload.get("job_id", "unknown")
 
         chain = MessageChain()
         chain.append(Comp.Text(message))
@@ -126,9 +134,9 @@ class CronPushPlugin(Star):
 
     async def terminate(self):
         """插件卸载时清理所有定时任务"""
-        for idx, info in list(self._jobs.items()):
+        for job_id in list(self._jobs.keys()):
             try:
-                await self.context.cron_manager.delete_job(info["job_name"])
+                await self.context.cron_manager.delete_job(job_id)
             except Exception:
                 pass
         self._jobs.clear()
