@@ -1,4 +1,0 @@
-﻿name: astrbot_plugin_cron_push
-author: Codex
-desc: 定时推送消息并正确@指定用户的 AstrBot 插件
-version: 1.0.0
