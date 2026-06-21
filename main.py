@@ -1,4 +1,4 @@
-﻿"""AstrBot 定时推送插件 —— 全内置模式，无条件推送。
+"""AstrBot 定时推送插件 —— 全内置模式，无条件推送。
 
 所有任务在插件加载时自动注册，到点自动发送。
 不依赖群号，遍历所有已连接的平台发送消息。
@@ -12,6 +12,8 @@ from astrbot.core.platform import AstrMessageEvent
 from astrbot.api.star import Context, Star
 from astrbot.api.event import MessageChain
 from astrbot.core.message.message_event_result import CommandResult
+from astrbot.core.platform.message_session import MessageSession
+from astrbot.core.platform.message_type import MessageType
 
 # 使用 astrbot 统一的 logger
 _logger = logging.getLogger("astrbot")
@@ -31,12 +33,12 @@ TASKS = [
     },
     {
         "enabled": False,
-        "cron": "0 12 * * *",          # 每天 12:00 PM
+        "cron": "0 12 * * *",          
         "message": "中午好！记得午休哦",
     },
     {
         "enabled": False,
-        "cron": "0 22 * * *",          # 每天 10:00 PM
+        "cron": "0 22 * * *",          
         "message": "晚安，好梦",
     },
 ]
@@ -51,6 +53,8 @@ class CronPushPlugin(Star):
         super().__init__(context)
         self._jobs: dict[str, dict] = {}
         self._next_index = 1
+        # 记录已知的会话列表 (platform_name:message_type:session_id)
+        self._known_sessions: set[str] = set()
 
         if self.ENABLE_BUILTIN_JOBS:
             _logger.info("[CronPush] 插件初始化完成，等待 initialize() 注册任务")
@@ -59,8 +63,31 @@ class CronPushPlugin(Star):
         """AstrBot 调用此方法进行插件初始化，此时可以安全访问事件循环。"""
         try:
             await self._register_builtin_tasks()
+            # 注册一个事件监听器，用于捕获 incoming 消息的 session
+            await self._register_session_listener()
         except Exception as e:
             _logger.error(f"[CronPush] 注册内置任务失败: {e}")
+
+    async def _register_session_listener(self):
+        """注册一个通用的消息接收监听器，用于收集已知会话。"""
+        from astrbot.core.star.register.star_handler import (
+            get_handler_or_create,
+        )
+        from astrbot.core.star.star_handler import EventType
+
+        @event_filter.AdapterMessageEvent
+        async def session_capture_handler(event: AstrMessageEvent):
+            """捕获所有收到的消息，记录其 unified_msg_origin 到已知会话列表。"""
+            umo = event.unified_msg_origin
+            if umo:
+                self._known_sessions.add(umo)
+                _logger.debug(f"[CronPush] 捕获到会话: {umo}")
+
+        get_handler_or_create(
+            session_capture_handler,
+            EventType.AdapterMessageEvent,
+        )
+        _logger.info("[CronPush] 已注册会话监听器")
 
     async def _register_builtin_tasks(self):
         """注册所有内置定时任务"""
@@ -97,7 +124,7 @@ class CronPushPlugin(Star):
                 _logger.error(f"[CronPush] 注册内置任务失败: {e}")
 
     async def _push_task(self, payload: dict | None = None, **kwargs):
-        """执行推送：遍历所有平台发送消息"""
+        """执行推送：遍历所有已知会话发送消息"""
         if payload is None:
             payload = {}
 
@@ -106,38 +133,60 @@ class CronPushPlugin(Star):
         chain = MessageChain()
         chain.chain.append(Comp.Plain(message))
 
-        # 遍历所有已连接的平台适配器
         sent = False
-        for platform in self.context.platform_manager.platform_insts:
-            meta = platform.meta()
-            platform_id = meta.id
-            platform_name = meta.name
 
-            # 尝试以群消息和私聊消息两种类型发送
-            for msg_type in ("GroupMessage", "FriendMessage"):
+        # 优先使用已捕获的已知会话
+        if self._known_sessions:
+            for session_str in sorted(self._known_sessions):
                 try:
-                    # 构建 session 字符串: platform_id:MessageType:session_id
-                    # session_id 用空字符串，send_message 会遍历平台查找
-                    session_str = f"{platform_id}:{msg_type}:"
                     success = await self.context.send_message(session_str, chain)
                     if success:
                         _logger.info(
-                            f'[CronPush] 已通过 {platform_id}({platform_name}) '
-                            f'[{msg_type}] 推送: {message}'
+                            f'[CronPush] 已通过会话 [{session_str}] 推送: {message}'
                         )
                         sent = True
-                        break
+                    else:
+                        _logger.debug(
+                            f"[CronPush] 会话 [{session_str}] 推送返回 False，跳过"
+                        )
                 except Exception as e:
                     _logger.debug(
-                        f"[CronPush] 通过 {platform_id}[{msg_type}] 推送失败: {e}"
+                        f"[CronPush] 通过会话 [{session_str}] 推送失败: {e}"
                     )
+        else:
+            # 没有已知会话时，尝试遍历所有平台
+            for platform in self.context.platform_manager.platform_insts:
+                meta = platform.meta()
+                platform_id = meta.id
+                platform_name = meta.name
 
-            if sent:
-                break
+                for msg_type in ("GroupMessage", "FriendMessage"):
+                    try:
+                        session = MessageSession(
+                            platform_name=platform_id,
+                            message_type=MessageType(msg_type),
+                            session_id="",
+                        )
+                        success = await self.context.send_message(str(session), chain)
+                        if success:
+                            _logger.info(
+                                f'[CronPush] 已通过 {platform_id}({platform_name}) '
+                                f'[{msg_type}] 推送: {message}'
+                            )
+                            sent = True
+                            break
+                    except Exception as e:
+                        _logger.debug(
+                            f"[CronPush] 通过 {platform_id}[{msg_type}] 推送失败: {e}"
+                        )
+
+                if sent:
+                    break
 
         if not sent:
             _logger.warning(
-                f"[CronPush] 推送失败，未找到可用平台。"
+                f"[CronPush] 推送失败，未找到可用会话。"
+                f"已知会话数: {len(self._known_sessions)}, "
                 f"当前平台数: {len(self.context.platform_manager.platform_insts)}"
             )
 
