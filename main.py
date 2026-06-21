@@ -1,6 +1,6 @@
 ﻿"""AstrBot 定时推送插件 —— 全内置模式，无条件推送。
 
-所有任务在插件加载时自动注册，到点自动发送，不依赖群号或活跃会话。
+所有任务在插件加载时自动注册，到点自动发送。
 """
 
 import asyncio
@@ -52,14 +52,16 @@ class CronPushPlugin(Star):
         self._next_index = 1
 
         # 插件加载时自动注册内置定时任务
+        # 注意：不要在 __init__ 里开新 event loop，AstrBot 会在初始化后调用 initialize()
         if self.ENABLE_BUILTIN_JOBS:
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self._register_builtin_tasks())
-                loop.close()
-            except Exception as e:
-                _logger.error(f"[CronPush] 注册内置任务失败: {e}")
+            _logger.info("[CronPush] 插件初始化完成，等待 initialize() 注册任务")
+
+    async def initialize(self):
+        """AstrBot 调用此方法进行插件初始化，此时可以安全访问事件循环。"""
+        try:
+            await self._register_builtin_tasks()
+        except Exception as e:
+            _logger.error(f"[CronPush] 注册内置任务失败: {e}")
 
     async def _register_builtin_tasks(self):
         """注册所有内置定时任务"""
