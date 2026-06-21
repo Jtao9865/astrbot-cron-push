@@ -25,7 +25,7 @@ _logger = logging.getLogger("astrbot")
 TASKS = [
     {
         "enabled": True,
-        "cron": "* * * * *",           # 每分钟
+        "cron": "0 9 * * *",           # 每天 9:00 AM
         "message": "早上好！新的一天开始了",
     },
     {
@@ -71,7 +71,6 @@ class CronPushPlugin(Star):
             self._next_index += 1
             job_id = f"builtin_{i}"
 
-            # payload 存储推送所需的数据，cron_manager 会在触发时传入
             job_data = {
                 "index": idx,
                 "job_id": job_id,
@@ -97,18 +96,16 @@ class CronPushPlugin(Star):
                 _logger.error(f"[CronPush] 注册内置任务失败: {e}")
 
     async def _push_task(self, payload: dict | None = None, **kwargs):
-        """执行推送：无条件发送消息
-        
-        AstrBot CronJobManager 触发时传入 payload 和额外 kwargs。
-        """
+        """执行推送：无条件发送消息"""
         if payload is None:
             payload = {}
 
         message = payload.get("message", "")
         job_id = payload.get("job_id", "unknown")
 
+        # MessageChain 没有 append 方法，组件存放在 chain.chain 列表中
         chain = MessageChain()
-        chain.append(Comp.Text(message))
+        chain.chain.append(Comp.Text(message))
 
         # 尝试向所有可能的会话发送
         sessions_to_try = [
