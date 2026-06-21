@@ -21,7 +21,7 @@ from astrbot.core.message.message_event_result import CommandResult
 GROUPS = [
     # --- 群1: 在此修改为你自己的群号 ---
     {
-        "group_id": 1234567890,       # <-- 替换为你的实际群号 (int)
+        "group_id": 2156063317,       # <-- 替换为你的实际群号 (int)
         "group_name": "我的主力群",
         "users": ["2854203313"],       # <-- 替换为要 @ 的用户QQ号 (str)
     },
@@ -42,8 +42,8 @@ TASKS = [
     {
         "enabled": True,
         "cron": "* * * * *",           # 每天 9:00 AM
-        "group_id": GROUPS[0]["2156063317"],
-        "users": GROUPS[0]["2854203313"],
+        "group_id": GROUPS[0]["group_id"],
+        "users": GROUPS[0]["users"],
         "message": "早上好！新的一天开始了",
     },
     {
