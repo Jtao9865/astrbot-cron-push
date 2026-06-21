@@ -47,24 +47,35 @@ class CronPushPlugin(Star):
         self._next_index = 1
         # 记录已知的会话列表 (platform_name:message_type:session_id)
         self._known_sessions: set[str] = set()
-        # 缓存平台 ID 列表，用于 fallback 推送
+        # 缓存平台 ID 列表
         self._platform_ids: list[str] = []
+        # 是否已完成懒加载初始化
+        self._lazy_initialized = False
 
         if self.ENABLE_BUILTIN_JOBS:
-            _logger.info("[CronPush] 插件初始化完成，等待 initialize() 注册任务")
+            _logger.info("[CronPush] 插件初始化完成，等待 OnPluginLoadedEvent 触发延迟注册")
 
     async def initialize(self):
-        """AstrBot 调用此方法进行插件初始化，此时可以安全访问事件循环。"""
-        try:
-            # 先缓存平台 ID，供 fallback 使用
-            self._platform_ids = [p.meta().id for p in self.context.platform_manager.platform_insts]
-            _logger.info(f"[CronPush] 已发现 {len(self._platform_ids)} 个平台: {self._platform_ids}")
-            
-            await self._register_builtin_tasks()
-            # 注册一个事件监听器，用于捕获 incoming 消息的 session
-            await self._register_session_listener()
-        except Exception as e:
-            _logger.error(f"[CronPush] 注册内置任务失败: {e}")
+        """AstrBot 调用此方法进行插件初始化。
+        
+        注意：此方法在平台适配器初始化之前就被调用，因此不能在这里
+        访问 platform_insts。改为注册 OnPluginLoadedEvent 监听器，
+        在平台就绪后再执行实际的任务注册。
+        """
+        await self._register_session_listener()
+
+    async def _lazy_register_tasks(self):
+        """在平台适配器就绪后，延迟注册定时任务。"""
+        if self._lazy_initialized:
+            return
+        self._lazy_initialized = True
+
+        # 缓存平台 ID
+        self._platform_ids = [p.meta().id for p in self.context.platform_manager.platform_insts]
+        _logger.info(f"[CronPush] 已发现 {len(self._platform_ids)} 个平台: {self._platform_ids}")
+
+        await self._register_builtin_tasks()
+        _logger.info("[CronPush] 延迟初始化完成，定时任务已注册")
 
     async def _register_session_listener(self):
         """注册一个通用的消息接收监听器，用于收集已知会话。"""
@@ -73,8 +84,12 @@ class CronPushPlugin(Star):
         )
         from astrbot.core.star.star_handler import EventType
 
+        # 先尝试延迟注册任务（如果平台已经就绪）
         async def session_capture_handler(event: AstrMessageEvent):
             """捕获所有收到的消息，记录其 unified_msg_origin 到已知会话列表。"""
+            # 首次收到消息时，尝试延迟初始化
+            await self._lazy_register_tasks()
+
             umo = event.unified_msg_origin
             if umo:
                 self._known_sessions.add(umo)
@@ -152,7 +167,6 @@ class CronPushPlugin(Star):
                     )
         else:
             _logger.warning("[CronPush] 暂无已知会话，尝试通过平台直接发送")
-            # 没有已知会话时，尝试遍历所有平台，向每个平台的第一个可用 session 发送
             sent = await self._fallback_push(chain, message)
 
         if not sent:
@@ -165,7 +179,7 @@ class CronPushPlugin(Star):
     async def _fallback_push(self, chain: MessageChain, message: str) -> bool:
         """当没有已知会话时，尝试向每个已注册平台发送广播消息。"""
         sent = False
-        
+
         for platform_id in self._platform_ids:
             platform = self.context.get_platform_inst(platform_id)
             if not platform:
