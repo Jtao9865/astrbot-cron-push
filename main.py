@@ -7,11 +7,9 @@
 import asyncio
 import logging
 import astrbot.api.message_components as Comp
-from astrbot.api.event import filter as event_filter
 from astrbot.core.platform import AstrMessageEvent
 from astrbot.api.star import Context, Star
 from astrbot.api.event import MessageChain
-from astrbot.core.message.message_event_result import CommandResult
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 
@@ -75,7 +73,6 @@ class CronPushPlugin(Star):
         )
         from astrbot.core.star.star_handler import EventType
 
-        @event_filter.AdapterMessageEvent
         async def session_capture_handler(event: AstrMessageEvent):
             """捕获所有收到的消息，记录其 unified_msg_origin 到已知会话列表。"""
             umo = event.unified_msg_origin
