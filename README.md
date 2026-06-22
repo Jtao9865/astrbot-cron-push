@@ -1,45 +1,19 @@
-﻿# AstrBot 定时推送插件 (CronPush)
+﻿# AstrBot Plugin: cron_push
+# 定时消息推送插件
 
-## Functionality
+## 功能说明
+- 支持通过 Cron 表达式配置定时任务
+- 向已知会话推送自定义消息
 
-- Uses AstrBot CronManager to register scheduled tasks (APScheduler backend)
-- Uses MessageChain with At component to properly @ mention users
-- Supports add, list, delete scheduled push tasks
-- Supports immediate push and cross-session @ messages
+## 安装方式
+将本文件夹复制到 AstrBot 的 stars 目录下即可自动加载。
 
-## Installation
+## 配置说明
+在 main.py 中的 TASKS 列表里添加/修改任务：
+- enabled: 是否启用
+- cron: Cron 表达式（如 * * * * * 表示每分钟）
+- message: 推送的消息内容
 
-1. Copy the entire folder to AstrBot plugins directory:
-   cp -r astrbot_plugin_cron_push_vscode ~/.astrbot/plugins/
-2. Restart AstrBot
-3. Enable the plugin in the management panel
-
-## Commands
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| /cron-add | Add scheduled push task | /cron-add 0 9 * * * 1000000 Morning! |
-| /cron-list | List all tasks | /cron-list |
-| /cron-del | Delete a task | /cron-del 1 |
-| /cron-push | Immediate @ push | /cron-push 1000000 Hello |
-| /cron-send | Send @ to any session | /cron-send group 123456 Hi everyone |
-
-## Cron Expression Format
-
-Standard 5-field: minute hour day month weekday
-
-| Expression | Meaning |
-|------------|---------|
-| 0 9 * * * | Every day at 9:00 |
-| 0 12 * * 1 | Every Monday at 12:00 |
-| 0 */2 * * * | Every 2 hours |
-| @daily | Daily midnight |
-| @hourly | Hourly |
-
-## File Structure
-
-astrbot_plugin_cron_push_vscode/
-  main.py              # Plugin main code
-  metadata.yaml        # Plugin metadata
-  requirements.txt     # Dependencies (none)
-  README.md            # This file
+## 依赖
+- astrbot >= 3.0.0
+- APScheduler
