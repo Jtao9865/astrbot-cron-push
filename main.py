@@ -3,7 +3,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig
-from astrbot.api.event import AstrMessageEvent, MessageChain
+from astrbot.api.event import AstrMessageEvent, MessageChain, EventType
 from astrbot.api.star import Context, Star
 
 _logger = logging.getLogger("astrbot")
@@ -25,7 +25,6 @@ class CronPushPlugin(Star):
 
     def _register_session_listener(self):
         from astrbot.core.star.register.star_handler import get_handler_or_create
-        from astrbot.core.star.star_handler import EventType
 
         async def capture(event: AstrMessageEvent):
             if event.unified_msg_origin:
@@ -40,19 +39,37 @@ class CronPushPlugin(Star):
             _logger.warning("[CronPush] CronManager 未初始化")
             return
 
+        # 调试：打印 cron_manager 的方法列表（可删除）
+        # _logger.info(f"[CronPush] cron_manager 可用方法: {dir(cron_manager)}")
+
         for i, task in enumerate(TASKS):
             if not task.get("enabled"):
                 continue
             try:
                 trigger = CronTrigger.from_crontab(task["cron"])
                 job_id = f"builtin_push_{i}"
-                cron_manager.add_job(
+
+                # 修正：使用 add 方法（而非 add_job）
+                cron_manager.add(
                     func=self._push_task,
                     trigger=trigger,
                     id=job_id,
-                    kwargs={"message": task["message"]},
+                    kwargs={"message": task["message"]}
                 )
                 _logger.info(f"[CronPush] 已注册 {job_id}: {task['cron']}")
+
+            except AttributeError:
+                # 如果 add 方法也不存在，尝试直接访问内部 scheduler
+                try:
+                    cron_manager.scheduler.add_job(
+                        func=self._push_task,
+                        trigger=trigger,
+                        id=job_id,
+                        kwargs={"message": task["message"]}
+                    )
+                    _logger.info(f"[CronPush] (通过scheduler) 已注册 {job_id}: {task['cron']}")
+                except Exception as e2:
+                    _logger.error(f"[CronPush] 注册失败（两种方式均失败）: {e2}")
             except Exception as e:
                 _logger.error(f"[CronPush] 注册失败: {e}")
 
@@ -67,14 +84,20 @@ class CronPushPlugin(Star):
                 await self.context.send_message(session_str, chain)
                 _logger.info(f"[CronPush] 推送到 {session_str}: {message}")
             except Exception as e:
-                _logger.debug(f"[CronPush] 推送失败 {session_str}: {e}")
+                _logger.error(f"[CronPush] 推送失败 {session_str}: {e}", exc_info=True)
 
     async def terminate(self):
         cron_manager = self.context.cron_manager
         if cron_manager:
             for i in range(len(TASKS)):
                 try:
-                    cron_manager.remove_job(f"builtin_push_{i}")
+                    # 移除任务时同样注意方法名
+                    if hasattr(cron_manager, "remove"):
+                        cron_manager.remove(f"builtin_push_{i}")
+                    elif hasattr(cron_manager, "remove_job"):
+                        cron_manager.remove_job(f"builtin_push_{i}")
+                    else:
+                        cron_manager.scheduler.remove_job(f"builtin_push_{i}")
                 except Exception:
                     pass
         _logger.info("[CronPush] 插件已卸载")
