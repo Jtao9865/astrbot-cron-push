@@ -3,15 +3,26 @@ from apscheduler.triggers.cron import CronTrigger
 
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig
-from astrbot.api.event import AstrMessageEvent, MessageChain, event
-from astrbot.core.event import EventType
+from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star
+
+# 尝试兼容不同版本的 EventType 导入路径
+try:
+    from astrbot.core.event import EventType
+except ImportError:
+    try:
+        from astrbot.api.event import EventType
+    except ImportError:
+        # 极端情况，定义一个默认值（实际可能无效，但避免崩溃）
+        EventType = None
+        _logger = logging.getLogger("astrbot")
+        _logger.warning("[CronPush] 无法导入 EventType，将使用字符串替代（可能不兼容）")
 
 _logger = logging.getLogger("astrbot")
 
-# 定时任务配置
+# 定时任务配置（第一个默认开启，每分钟执行一次）
 TASKS = [
-    {"enabled": True, "cron": "* * * * *", "message": "早上好！新的一天开始了"},
+    {"enabled": True, "cron": "* * * * *", "message": "定时推送测试消息"},
     {"enabled": False, "cron": "0 12 * * *", "message": "中午好！记得午休哦"},
 ]
 
@@ -20,24 +31,36 @@ class CronPushPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig = None):
         super().__init__(context, config)
         self._known_sessions = set()
-        # 会话监听由 @event 装饰器自动注册，无需手动调用
+        self._register_session_listener()
         self._register_builtin_tasks()
 
-    @event(EventType.AdapterMessageEvent)
-    async def capture_session(self, event: AstrMessageEvent):
-        """捕获所有消息，记录会话 unified_msg_origin"""
-        if event.unified_msg_origin:
-            self._known_sessions.add(event.unified_msg_origin)
-            _logger.debug(f"[CronPush] 捕获会话: {event.unified_msg_origin}")
+    def _register_session_listener(self):
+        """使用 get_handler_or_create 手动注册消息监听器，捕获所有会话"""
+        try:
+            from astrbot.core.star.register.star_handler import get_handler_or_create
+        except ImportError:
+            _logger.error("[CronPush] 无法导入 get_handler_or_create，会话监听将失效")
+            return
+
+        async def capture(event: AstrMessageEvent):
+            if event.unified_msg_origin:
+                self._known_sessions.add(event.unified_msg_origin)
+                _logger.debug(f"[CronPush] 捕获会话: {event.unified_msg_origin}")
+
+        try:
+            # 使用 EventType.AdapterMessageEvent 或字符串（兼容）
+            event_type = EventType.AdapterMessageEvent if EventType else "adapter_message"
+            get_handler_or_create(capture, event_type)
+            _logger.info("[CronPush] 会话监听器注册成功")
+        except Exception as e:
+            _logger.error(f"[CronPush] 会话监听器注册失败: {e}", exc_info=True)
 
     def _register_builtin_tasks(self):
+        """注册定时任务"""
         cron_manager = self.context.cron_manager
         if cron_manager is None:
             _logger.warning("[CronPush] CronManager 未初始化，无法注册定时任务")
             return
-
-        # 调试：打印 cron_manager 的可用方法（可删除此行）
-        # _logger.info(f"[CronPush] cron_manager 可用属性: {dir(cron_manager)}")
 
         for i, task in enumerate(TASKS):
             if not task.get("enabled"):
@@ -46,7 +69,7 @@ class CronPushPlugin(Star):
                 trigger = CronTrigger.from_crontab(task["cron"])
                 job_id = f"builtin_push_{i}"
 
-                # 尝试使用 add 方法（新版 AstrBot）
+                # 适配不同版本的 cron_manager API
                 if hasattr(cron_manager, "add"):
                     cron_manager.add(
                         func=self._push_task,
@@ -54,7 +77,6 @@ class CronPushPlugin(Star):
                         id=job_id,
                         kwargs={"message": task["message"]}
                     )
-                # 若不存在 add，则尝试使用内部 scheduler 的 add_job
                 elif hasattr(cron_manager, "scheduler") and hasattr(cron_manager.scheduler, "add_job"):
                     cron_manager.scheduler.add_job(
                         func=self._push_task,
@@ -63,7 +85,7 @@ class CronPushPlugin(Star):
                         kwargs={"message": task["message"]}
                     )
                 else:
-                    _logger.error(f"[CronPush] 无法找到注册任务的方法，cron_manager 类型: {type(cron_manager)}")
+                    _logger.error(f"[CronPush] 无法注册任务，cron_manager 类型: {type(cron_manager)}")
                     continue
 
                 _logger.info(f"[CronPush] 已注册定时任务 {job_id}: {task['cron']} -> {task['message']}")
@@ -72,7 +94,7 @@ class CronPushPlugin(Star):
                 _logger.error(f"[CronPush] 注册任务失败: {e}", exc_info=True)
 
     async def _push_task(self, message: str):
-        """定时推送任务"""
+        """定时执行的推送任务"""
         if not self._known_sessions:
             _logger.warning("[CronPush] 无已知会话，跳过本次推送")
             return
